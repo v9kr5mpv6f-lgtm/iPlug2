@@ -236,18 +236,29 @@ std::optional<uint32_t> IPlugAPPHost::GetAudioDeviceID(const char* deviceNameToT
 int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) const
 {
   int start = 1;
-  
+
+  // Defensive: a null device name would strlen(nullptr) inside string_view,
+  // and a null mMidiIn/mMidiOut (InitMidi() failed -- e.g. CoreMIDI/RtMidi is
+  // unavailable in a headless/agent shell) would be dereferenced by the
+  // enumeration loops below. Either case crashed at launch (Init() calls this
+  // unconditionally after InitMidi()). Degrade to the OFF/"none" port (0) so
+  // the app launches with MIDI disabled instead of crashing -- mirrors the
+  // existing null-object guard in ProbeMidiIO().
+  if (nameToTest == nullptr)
+    return 0;
+
   auto nameStrView = std::string_view(nameToTest);
-  
+
   if (direction == ERoute::kInput)
   {
     if (nameStrView == OFF_TEXT) return 0;
-    
+    if (!mMidiIn) return 0;
+
   #ifdef OS_MAC
     start = 2;
     if (nameStrView == "virtual input") return 1;
   #endif
-    
+
     for (int i = 0; i < mMidiIn->getPortCount(); i++)
     {
       if (nameStrView == mMidiIn->getPortName(i).c_str())
@@ -257,19 +268,20 @@ int IPlugAPPHost::GetMIDIPortNumber(ERoute direction, const char* nameToTest) co
   else
   {
     if (nameStrView == OFF_TEXT) return 0;
-  
+    if (!mMidiOut) return 0;
+
   #ifdef OS_MAC
     start = 2;
     if (nameStrView == "virtual output") return 1;
   #endif
-  
+
     for (int i = 0; i < mMidiOut->getPortCount(); i++)
     {
       if (nameStrView == mMidiOut->getPortName(i).c_str())
         return (i + start);
     }
   }
-  
+
   return -1;
 }
 
