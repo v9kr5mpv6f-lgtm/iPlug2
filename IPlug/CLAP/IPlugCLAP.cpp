@@ -411,11 +411,29 @@ bool IPlugCLAP::renderSetMode(clap_plugin_render_mode mode) noexcept
 bool IPlugCLAP::stateSave(const clap_ostream* pStream) noexcept
 {
   IByteChunk chunk;
-  
+
   if (!SerializeState(chunk))
     return false;
-  
-  return pStream->write(pStream, chunk.GetData(), chunk.Size()) == chunk.Size();
+
+  // Per clap/stream.h: a host's stream may limit how many bytes it accepts
+  // in one write() call, so this MUST loop until everything is written
+  // (or the stream signals an error via a negative return) rather than
+  // assuming one call either writes everything or fails outright.
+  const uint8_t* pData = chunk.GetData();
+  int64_t remaining = chunk.Size();
+
+  while (remaining > 0)
+  {
+    const int64_t written = pStream->write(pStream, pData, static_cast<uint64_t>(remaining));
+
+    if (written <= 0)
+      return false;
+
+    pData += written;
+    remaining -= written;
+  }
+
+  return true;
 }
 
 bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
