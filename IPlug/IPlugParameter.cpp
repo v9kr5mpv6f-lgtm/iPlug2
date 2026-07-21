@@ -271,7 +271,18 @@ void IParam::GetDisplay(double value, bool normalized, WDL_String& str, bool wit
 
   if (withDisplayText)
   {
-    const char* displayText = GetDisplayText(value);
+    // Land on the nearest valid step before the exact-match DisplayText
+    // lookup, for stepped params (bool/enum/int). GetDisplayText() does an
+    // exact == comparison against the registered values (e.g. 0.0/1.0 for
+    // a bool's "off"/"on"), so an arbitrary in-range double that's merely
+    // CLOSE to a step (0.97, not exactly 1.0) previously missed the lookup
+    // entirely and fell through to raw "%d" formatting ("1" instead of
+    // "on") -- inconsistent with what the SAME value rounds to once it's
+    // actually been Set() on the param. Scoped to just this lookup so
+    // mDisplayFunction and the numeric-fallback formatting below are
+    // unaffected.
+    const double lookupValue = (mFlags & kFlagStepped) ? round(value / mStep) * mStep : value;
+    const char* displayText = GetDisplayText(lookupValue);
 
     if (CStringHasContents(displayText))
     {
@@ -363,7 +374,18 @@ double IParam::StringToValue(const char* str) const
   if (mapped)
     mapped = MapDisplayText(str, &v);
 
-  if (!mapped && Type() != kTypeEnum && Type() != kTypeBool)
+  // Numeric fallback for ANY type, not just non-enum/non-bool. GetDisplay()
+  // can produce a numeric string (e.g. "%d" rounding) for enum/bool params
+  // whenever the value being displayed doesn't exactly equal one of the
+  // registered DisplayText values -- e.g. a fuzzed/interpolated value near
+  // but not exactly on a step boundary. Previously that case fell through
+  // to the unmapped default of 0.0 regardless of the input string, breaking
+  // the round trip GetDisplay(v) -> str -> StringToValue(str) for anything
+  // other than the exact registered text. atof() on genuinely non-numeric
+  // garbage still yields 0.0, so this doesn't change behavior for real
+  // enum/bool text that fails to map -- it only fixes the case where the
+  // string IS the numeric fallback GetDisplay itself produced.
+  if (!mapped)
   {
     v = atof(str);
 
