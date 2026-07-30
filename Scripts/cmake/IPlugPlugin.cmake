@@ -87,6 +87,38 @@ function(_iplug_add_resources target resources)
 endfunction()
 
 # ============================================================================
+# Add the project's main.rc to a Windows target
+#
+# On Windows every binary that hosts an IGraphics UI needs its own compiled
+# copy of main.rc: fonts/images are looked up with FindResource() against the
+# module that is asking for them (see IGraphics::LoadFont ->
+# LocateResource(..., GetWinModuleHandle()) in IPlugPaths.cpp), so a resource
+# linked only into the app executable is invisible to the VST3/CLAP/AAX DLLs.
+# Without this, plugin builds silently fall back to kNotFound and draw no text.
+# ============================================================================
+function(_iplug_add_win_rc target)
+  if(NOT WIN32)
+    return()
+  endif()
+
+  set(_rc_file "${CMAKE_CURRENT_SOURCE_DIR}/resources/main.rc")
+  if(NOT EXISTS "${_rc_file}")
+    return()
+  endif()
+
+  target_sources(${target} PRIVATE "${_rc_file}")
+  # Tell RC compiler where to find resources (fonts, images, etc.)
+  # The .rc file references files like "Roboto-Regular.ttf" without path.
+  # Source file properties are directory-scoped and a function body runs in
+  # its caller's directory scope, so setting this once per target is harmless
+  # (it lands on the same project-level scope every time) and stays compatible
+  # with the CMake 3.14 minimum -- the DIRECTORY option would need 3.18.
+  set_source_files_properties("${_rc_file}" PROPERTIES
+    COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/img\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\""
+  )
+endfunction()
+
+# ============================================================================
 # Create APP, VST3, CLAP, AAX targets (macOS/Windows only)
 # ============================================================================
 function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resources web_resources base_lib)
@@ -95,19 +127,10 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
     return()
   endif()
 
-  # APP target (uses add_executable, needs .rc on Windows)
+  # APP target
   if("APP" IN_LIST formats)
-    set(_app_sources ${sources})
-    set(_rc_file "${CMAKE_CURRENT_SOURCE_DIR}/resources/main.rc")
-    if(WIN32 AND EXISTS "${_rc_file}")
-      list(APPEND _app_sources "${_rc_file}")
-      # Tell RC compiler where to find resources (fonts, images, etc.)
-      # The .rc file references files like "Roboto-Regular.ttf" without path
-      set_source_files_properties("${_rc_file}" PROPERTIES
-        COMPILE_FLAGS "/I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/fonts\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources/img\" /I\"${CMAKE_CURRENT_SOURCE_DIR}/resources\""
-      )
-    endif()
-    add_executable(${plugin_name}-app ${_app_sources})
+    add_executable(${plugin_name}-app ${sources})
+    _iplug_add_win_rc(${plugin_name}-app)
     iplug_add_target(${plugin_name}-app PUBLIC
       LINK iPlug2::APP ${ui_lib} ${base_lib}
     )
@@ -119,6 +142,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   # VST2 (conditional on SDK availability - deprecated)
   if("VST2" IN_LIST formats AND IPLUG2_VST2_SUPPORTED)
     add_library(${plugin_name}-vst2 MODULE ${sources})
+    _iplug_add_win_rc(${plugin_name}-vst2)
     iplug_add_target(${plugin_name}-vst2 PUBLIC
       LINK iPlug2::VST2 ${ui_lib} ${base_lib}
     )
@@ -130,6 +154,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   # VST3 (always available)
   if("VST3" IN_LIST formats)
     add_library(${plugin_name}-vst3 MODULE ${sources})
+    _iplug_add_win_rc(${plugin_name}-vst3)
     iplug_add_target(${plugin_name}-vst3 PUBLIC
       LINK iPlug2::VST3 ${ui_lib} ${base_lib}
     )
@@ -141,6 +166,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   # CLAP (conditional on SDK availability)
   if("CLAP" IN_LIST formats AND IPLUG2_CLAP_SUPPORTED)
     add_library(${plugin_name}-clap MODULE ${sources})
+    _iplug_add_win_rc(${plugin_name}-clap)
     iplug_add_target(${plugin_name}-clap PUBLIC
       LINK iPlug2::CLAP ${ui_lib} ${base_lib}
     )
@@ -152,6 +178,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   # AAX (conditional on SDK availability)
   if("AAX" IN_LIST formats AND IPLUG2_AAX_SUPPORTED)
     add_library(${plugin_name}-aax MODULE ${sources})
+    _iplug_add_win_rc(${plugin_name}-aax)
     iplug_add_target(${plugin_name}-aax PUBLIC
       LINK iPlug2::AAX ${ui_lib} ${base_lib}
     )
