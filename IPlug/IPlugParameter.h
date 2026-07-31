@@ -69,6 +69,19 @@ public:
   /** DisplayFunc allows custom parameter display functions, defined by a lambda matching this signature */
   using DisplayFunc = std::function<void(double, WDL_String&)>;
 
+  /** StringToValueFunc is the INVERSE of DisplayFunc: it turns a display string
+   * back into a parameter value. Return true if the string was understood and
+   * pValueOut was written; return false to fall through to the normal
+   * display-text / atof handling.
+   *
+   * A DisplayFunc that rescales or re-units the value (the common case: a 0..1
+   * parameter shown as "99 %") cannot be undone by StringToValue's atof
+   * fallback -- that reads 99 and Constrain() clamps it to the range maximum,
+   * so host text entry silently jumps the parameter to its top. Only the plugin
+   * knows what its DisplayFunc did, so it has to supply the matching inverse.
+   * Pair the two whenever the display is not a plain number in param units. */
+  using StringToValueFunc = std::function<bool(const char*, double& pValueOut)>;
+
 #pragma mark - Shape
 
   /** Base struct for parameter shaping */
@@ -341,6 +354,12 @@ public:
    * @param func A function conforming to DisplayFunc */
   void SetDisplayFunc(DisplayFunc func) { mDisplayFunction = func; }
 
+  /** Set the function to translate a display string back to a value -- the
+   * inverse of SetDisplayFunc. Required for any DisplayFunc that rescales or
+   * re-units, otherwise StringToValue() cannot recover the value.
+   * @param func A function conforming to StringToValueFunc */
+  void SetStringToValueFunc(StringToValueFunc func) { mStringToValueFunction = func; }
+
   /** Gets a readable value of the parameter
    * @return double Current value of the parameter */
   double Value() const { return mValue.load(); }
@@ -527,6 +546,7 @@ private:
   
   std::unique_ptr<Shape> mShape;
   DisplayFunc mDisplayFunction = nullptr;
+  StringToValueFunc mStringToValueFunction = nullptr;
 
   WDL_TypedBuf<DisplayText> mDisplayTexts;
 } WDL_FIXALIGN;

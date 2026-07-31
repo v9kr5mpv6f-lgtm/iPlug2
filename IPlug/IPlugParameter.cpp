@@ -369,6 +369,17 @@ bool IParam::MapDisplayText(const char* str, double* pValue) const
 double IParam::StringToValue(const char* str) const
 {
   double v = 0.;
+
+  // A custom StringToValueFunc is the inverse of a custom DisplayFunc, and is
+  // the ONLY path that knows how the display was scaled or re-united. It has to
+  // run before both the display-text lookup and the atof fallback below: for a
+  // 0..1 parameter displayed as "99 %", atof reads 99 and Constrain() pins it to
+  // 1.0, so host text entry would jump the parameter to its maximum. Returning
+  // false falls through to the original behaviour, and a parameter that never
+  // sets one is completely unaffected.
+  if (mStringToValueFunction != nullptr && mStringToValueFunction(str, v))
+    return Constrain(v);
+
   bool mapped = (bool) NDisplayTexts();
 
   if (mapped)
