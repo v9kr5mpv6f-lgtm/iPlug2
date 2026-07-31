@@ -1391,7 +1391,30 @@ protected:
    * @return IRECT The bounds over which mouse deltas will be used to calculate the amount dragging changes the control value */
   virtual IRECT GetKnobDragBounds() { return mTargetRECT; }
 
-  bool mHideCursorOnDrag = true;
+  // OSKILLATOR LOCAL PATCH (2026-07-30): default flipped true -> false.
+  //
+  // With this true, OnMouseDown calls HideMouseCursor(true, /*lock*/ true),
+  // which puts IGraphicsMac into cursor-lock mode and warps the pointer back to
+  // the press point on every drag event. On Paul's display that produces one
+  // enormous bogus delta on the first drag -- and because macOS computes drag
+  // deltas as position DIFFERENCES (IGraphicsMac_view.mm, info.dY = info.y -
+  // prevY) rather than from event deltas, OnMouseDrag accumulates it and clips
+  // mMouseDragValue to 0. The knob slams to its minimum and has to be rolled
+  // all the way back up; the lock then re-warps to the same point each event so
+  // later deltas behave. Verified hands-on in Brownout: the bug is present with
+  // the lock, gone without it.
+  //
+  // The precise defect inside the lock path is NOT identified -- the obvious
+  // suspect (a pixels-vs-points mix in IGraphicsMac::RepositionCursor) was
+  // measured and disproven: CGDisplayPixelsHigh returns POINTS on this machine,
+  // so that flip is correct. Do not "fix" RepositionCursor.
+  //
+  // Turning the hide off keeps DoCursorLock in its pass-through branch, so no
+  // warp ever happens and deltas are real mouse movement. Safe by construction:
+  // it cannot strand a hidden cursor, because the matching HideMouseCursor(false)
+  // in OnMouseUp is behind this same flag. Cost is only that the pointer stays
+  // visible and drifts while dragging.
+  bool mHideCursorOnDrag = false;
   EDirection mDirection;
   double mGearing;
   bool mMouseDown = false;
@@ -1415,7 +1438,20 @@ public:
   bool IsFineControl(const IMouseMod& mod, bool wheel) const;
   
 protected:
-  bool mHideCursorOnDrag = true;
+  // OSKILLATOR LOCAL PATCH (2026-07-30): default flipped true -> false, matching
+  // IKnobControlBase above -- see the long comment there for the defect. Sliders
+  // run the identical hide/lock/warp path and carry the identical bug.
+  //
+  // ONE EXTRA CONSEQUENCE HERE, unlike the knob case: OnMouseDrag also reads this
+  // flag to choose its DRAG MODEL. With the cursor hidden it accumulates
+  // relatively (with gearing, and fine-control via modifier); with the cursor
+  // visible it calls SnapToMouse so the handle tracks the pointer absolutely.
+  // So continuous sliders now track the cursor instead of accumulating, which
+  // also makes the bug structurally impossible there (no accumulation at all).
+  // Stepped params still fall through to the relative path either way.
+  // The trade is losing fine-control gearing on continuous sliders; revert this
+  // one line if that matters more than the fix.
+  bool mHideCursorOnDrag = false;
   EDirection mDirection;
   IRECT mTrackBounds;
   float mHandleSize;
