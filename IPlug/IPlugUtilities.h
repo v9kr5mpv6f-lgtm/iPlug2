@@ -19,12 +19,14 @@
  */
 
 #include <algorithm>
+#include <cfloat>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <cctype>
 #include <string>
+#include <type_traits>
 
 #include "heapbuf.h"
 #include "wdlstring.h"
@@ -153,6 +155,55 @@ void CastCopy(DEST* pDest, SRC* pSrc, int n)
   for (int i = 0; i < n; ++i, ++pDest, ++pSrc)
   {
     *pDest = (DEST) *pSrc;
+  }
+}
+
+/** Helper function for the OUTPUT direction only: copies and casts a buffer exactly as CastCopy()
+ * does, and additionally flushes float32 subnormals to zero when - and only when - the destination
+ * type is float.
+ *
+ * WHY A ScopedNoDenormals-STYLE GUARD INSIDE THE PLUGIN CANNOT COVER THIS.
+ * FTZ (x86) and FPCR.FZ (ARM) flush a result that is subnormal IN THE DESTINATION FORMAT of the
+ * operation that produced it. A double-precision engine's 1e-39 is a perfectly NORMAL double -
+ * double's smallest normal is ~2.2e-308 - so the flush never fires on it and the value survives the
+ * whole block. It becomes subnormal HERE, in the wrapper's double -> float32 copy, and that copy
+ * runs after ProcessBlock() has returned, which is after any scoped guard inside the plugin has
+ * already restored the host's control word. There is no scope the plugin could open that would
+ * contain this copy, so the framework has to do it. Every value in [1.4e-45, 1.18e-38) is in that
+ * band, and handing one to the host is the next plugin in the chain paying the denormal penalty.
+ * clap-validator's param-fuzz-basic flags it, correctly.
+ *
+ * NaN and infinity pass through UNTOUCHED: every comparison against a NaN is false, and infinity is
+ * not less than FLT_MIN. A guard that swallowed non-finites would launder away the very defect
+ * class the validators exist to find. Signed zero passes through untouched as well, so this is a
+ * provable no-op on every input that is not an actual float32 subnormal.
+ *
+ * The flush compiles out entirely when DEST is not float. Under SAMPLE_TYPE_FLOAT the engine writes
+ * the host's 32-bit buffers directly with no copy at all, and this template then only instantiates
+ * for the float -> double 64-bit path, where no float32 subnormal can be created.
+ *
+ * The INPUT direction deliberately keeps plain CastCopy(): flushing there would alter what the
+ * plugin is given rather than what it emits, which is a different decision with different
+ * semantics and is not what this fixes.
+ * @tparam SRC The source type
+ * @tparam DEST The destination type
+ * @param pDest Ptr to the destination buffer
+ * @param pSrc Ptr to the source buffer
+ * @param n The number of or elements in the buffer */
+template <class SRC, class DEST>
+void CastCopyOutput(DEST* pDest, SRC* pSrc, int n)
+{
+  if constexpr (std::is_same<DEST, float>::value)
+  {
+    for (int i = 0; i < n; ++i, ++pDest, ++pSrc)
+    {
+      const float v = (float) *pSrc;
+      *pDest = (v < FLT_MIN && v > -FLT_MIN && v != 0.0f) ? 0.0f : v;
+    }
+  }
+  else
+  {
+    CastCopy(pDest, pSrc, n);
   }
 }
 

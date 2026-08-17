@@ -515,7 +515,9 @@ void IPlugProcessor::PassThroughBuffers(PLUG_SAMPLE_SRC type, int nFrames)
     IChannelData<>* pOutChannel = *ppOutChannel;
     if (pOutChannel->mConnected)
     {
-      CastCopy(pOutChannel->mIncomingData, *(pOutChannel->mData), nFrames);
+      // CastCopyOutput, not CastCopy: this cast is what turns a normal double into a float32
+      // subnormal in the host's buffer, and it runs outside any denormal scope the plugin can open.
+      CastCopyOutput(pOutChannel->mIncomingData, *(pOutChannel->mData), nFrames);
     }
   }
 }
@@ -537,7 +539,8 @@ void IPlugProcessor::ProcessBuffers(PLUG_SAMPLE_SRC type, int nFrames)
 
     if (pOutChannel->mConnected)
     {
-      CastCopy(pOutChannel->mIncomingData, *(pOutChannel->mData), nFrames);
+      // CastCopyOutput, not CastCopy: see PassThroughBuffers above. Same cast, same defect.
+      CastCopyOutput(pOutChannel->mIncomingData, *(pOutChannel->mData), nFrames);
     }
   }
 }
