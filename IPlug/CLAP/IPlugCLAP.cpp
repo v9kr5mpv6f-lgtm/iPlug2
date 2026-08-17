@@ -451,10 +451,24 @@ bool IPlugCLAP::stateLoad(const clap_istream* pStream) noexcept
     return false;
       
   bool restoredOK = UnserializeState(chunk, 0) >= 0;
-  
+
   if (restoredOK)
+  {
     OnRestoreState();
-  
+
+    // Per clap/ext/params.h, "Scenario I. Loading a preset": once the new state is in place the
+    // plugin must "call clap_host_params.rescan() if anything changed". Without it the host keeps
+    // showing the pre-load values in its generic UI and automation lanes, because nothing tells it
+    // to re-read them. CLAP_PARAM_RESCAN_VALUES is the correct mask - the header describes it as
+    // "the parameter values did change, eg. after loading a preset", and it is legal while the
+    // plugin is active, whereas CLAP_PARAM_RESCAN_ALL is reserved for parameters being added or
+    // removed and "can only be used while the plugin is deactivated". Restoring iPlug2 state
+    // changes values, never the parameter list or its info. Both clap_plugin_state.load() and
+    // clap_host_params.rescan() are [main-thread], so no thread hop is needed here.
+    if (GetClapHost().canUseParams())
+      GetClapHost().paramsRescan(CLAP_PARAM_RESCAN_VALUES);
+  }
+
   return restoredOK;
 }
 
