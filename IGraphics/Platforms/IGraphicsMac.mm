@@ -516,7 +516,16 @@ void IGraphicsMac::PromptForFile(WDL_String& fileName, WDL_String& path, EFileAc
   {
     NSWindow* pWindow = [(IGRAPHICS_VIEW*) mView window];
 
+    std::weak_ptr<bool> live = GetLivenessToken();
+
     [(NSSavePanel*) pPanel beginSheetModalForWindow:pWindow completionHandler:^(NSModalResponse response) {
+      // Same lifetime problem as the pop-up menu: the editor can be torn down
+      // while the sheet is up. This guards iPlug2's side only -- whatever the
+      // consumer's completionHandler captured remains the consumer's problem.
+      auto alive = live.lock();
+      if (!alive || !*alive)
+        return;
+
       WDL_String fileNameAsync, pathAsync;
       doHandleResponse(pPanel, response, fileNameAsync, pathAsync, completionHandler);
     }];
@@ -575,7 +584,14 @@ void IGraphicsMac::PromptForDirectory(WDL_String& dir, IFileDialogCompletionHand
   {
     NSWindow* pWindow = [(IGRAPHICS_VIEW*) mView window];
 
+    std::weak_ptr<bool> live = GetLivenessToken();
+
     [panelOpen beginSheetModalForWindow:pWindow completionHandler:^(NSModalResponse response) {
+      // See PromptForFile above -- the editor can die while the sheet is up.
+      auto alive = live.lock();
+      if (!alive || !*alive)
+        return;
+
       WDL_String pathAsync;
       doHandleResponse(panelOpen, response, pathAsync, completionHandler);
     }];
@@ -598,8 +614,25 @@ bool IGraphicsMac::PromptForColor(IColor& color, const char* str, IColorPickerHa
 IPopupMenu* IGraphicsMac::CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT bounds, bool& isAsync)
 {
   isAsync = true;
-  
+
+  // The block below outlives this call, and BOTH the objects it touches can be
+  // destroyed before it runs: `this`, because the host may delete the editor
+  // (IGEditorDelegate::CloseWindow nulls a unique_ptr, and in CLAP both
+  // guiDestroy() and guiHide() take that path -- merely hiding the window is
+  // enough); and `menu`, which is a reference to an IPopupMenu that is
+  // ordinarily a MEMBER of the control that asked for it, and so dies with the
+  // controls in RemoveAllControls(). A liveness token covers the first; the
+  // GetControlInPopupMenu() null-check covers the second, because
+  // RemoveAllControls() nulls that member as it frees the control.
+  std::weak_ptr<bool> live = GetLivenessToken();
+
   dispatch_async(dispatch_get_main_queue(), ^{
+    auto alive = live.lock();
+
+    // Gone between the click and this callback -- the commonest case by far.
+    if (!alive || !*alive || !GetControlInPopupMenu())
+      return;
+
     IPopupMenu* pReturnMenu = nullptr;
 
     if (mView)
@@ -608,9 +641,16 @@ IPopupMenu* IGraphicsMac::CreatePlatformPopupMenu(IPopupMenu& menu, const IRECT 
       pReturnMenu = [(IGRAPHICS_VIEW*) mView createPopupMenu: menu: areaRect];
     }
 
+    // createPopupMenu: runs the NSMenu modally in a NESTED runloop, during which
+    // the host can process a gui teardown. Re-check before touching pReturnMenu,
+    // which points into `menu` -- and do it ahead of ExecFunction(), not merely
+    // ahead of SetControlValueAfterPopupMenu().
+    if (!*alive || !GetControlInPopupMenu())
+      return;
+
     if (pReturnMenu && pReturnMenu->GetFunction())
       pReturnMenu->ExecFunction();
-    
+
     this->SetControlValueAfterPopupMenu(pReturnMenu);
   });
 

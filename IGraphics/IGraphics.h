@@ -1149,6 +1149,19 @@ public:
   
   /** Called when the text entry is dismissed, to reset mInTextEntry */
   void ClearInTextEntryControl() { mInTextEntry = nullptr; }
+
+  /** @return Ptr to the control that launched the pop-up menu, or nullptr if that
+   * control has since been destroyed. An asynchronous platform menu MUST re-check
+   * this before touching the IPopupMenu it was handed, because that menu is
+   * ordinarily a member of the requesting control and dies with it. */
+  IControl* GetControlInPopupMenu() { return mInPopupMenu; }
+
+  /** @return A liveness token for asynchronous platform callbacks. ~IGraphics sets
+   * the pointee false, so a deferred block holding a std::weak_ptr to it can tell
+   * that the object it captured has been destroyed. Required on macOS, where the
+   * pop-up menu and the file/directory sheets are dispatched asynchronously and the
+   * host may delete the editor before they complete. */
+  std::weak_ptr<bool> GetLivenessToken() const { return mLive; }
   
   /** @return \c true if tool tips are enabled */
   inline bool TooltipsEnabled() const { return mEnableTooltips; }
@@ -1853,6 +1866,9 @@ private:
   IControl* mMouseOver = nullptr;
   IControl* mInTextEntry = nullptr;
   IControl* mInPopupMenu = nullptr;
+  /** Liveness token shared with deferred platform callbacks; see GetLivenessToken().
+   * Initialised here, not in the ctor body, so it is valid for the whole lifetime. */
+  std::shared_ptr<bool> mLive = std::make_shared<bool>(true);
   void* mPlatformContext = nullptr;
   bool mIsContextMenu = false;
   int mTextEntryValIdx = kNoValIdx;

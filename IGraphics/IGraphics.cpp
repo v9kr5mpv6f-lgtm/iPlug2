@@ -60,9 +60,16 @@ IGraphics::IGraphics(IGEditorDelegate& dlg, int w, int h, int fps, float scale)
 
 IGraphics::~IGraphics()
 {
+  // FIRST, ahead of anything a control destructor might re-enter: tell every
+  // in-flight asynchronous platform callback that this object is gone. The
+  // macOS pop-up menu and file sheets are dispatched onto the main queue, and
+  // the host may delete the editor (IGEditorDelegate::CloseWindow sets
+  // mGraphics, a unique_ptr, to nullptr) before the block runs.
+  *mLive = false;
+
   // N.B. - the OS levels have destructed, so we can't show/hide the cursor
   // Thus, this prevents a call to a pure virtual in ReleaseMouseCapture
-    
+
   mCursorHidden = false;
   RemoveAllControls();
     
@@ -202,7 +209,18 @@ void IGraphics::RemoveAllControls()
   mTextEntryControl = nullptr;
   mCornerResizer = nullptr;
   mPerfDisplay = nullptr;
-    
+
+  // Both RemoveControl() overloads above null these when they free the control
+  // they point at. This bulk path frees EVERY control and must do the same, or
+  // an in-flight platform pop-up / text entry completion lands on freed memory:
+  // SetControlValueAfterPopupMenu() and SetControlValueAfterTextEdit() guard on
+  // null and on nothing else. The macOS pop-up menu is dispatched
+  // asynchronously, so the editor can be torn down between the click and the
+  // callback; a layout rebuild (SetLayoutOnResize) can do it with no teardown
+  // at all.
+  mInPopupMenu = nullptr;
+  mInTextEntry = nullptr;
+
 #if !defined(NDEBUG) || defined(IPLUG_LIVE_EDIT)
   mLiveEdit = nullptr;
 #endif
