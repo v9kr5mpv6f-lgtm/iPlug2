@@ -1037,14 +1037,18 @@ bool IPlugCLAP::guiSetSize(uint32_t width, uint32_t height) noexcept
 // TODO - wildcards (return as -1 chans...)
 void IPlugCLAP::SetDefaultConfig()
 {
-  auto isMatch = [&](int idx, int chans)
+  // An instrument that declares BOTH a no-input config and one with an input bus
+  // has asked for both on purpose, and only one of them can be the default. This
+  // flag is what makes that a two-pass decision rather than a coin toss -- see
+  // testMatches below.
+  auto isMatch = [&](int idx, int chans, bool allowNoInput)
   {
     if (NBuses(ERoute::kOutput, idx) >= 1 && NChannels(ERoute::kOutput, 0, idx) == chans)
     {
       int numBuses = NBuses(ERoute::kInput, idx);
       
       // Instruments are allowed to match with no inputs
-      if (IsInstrument() && (numBuses == 0 || NChannels(ERoute::kInput, 0, idx) == 0))
+      if (allowNoInput && IsInstrument() && (numBuses == 0 || NChannels(ERoute::kInput, 0, idx) == 0))
         return true;
       
       // Otherwise IO must match
@@ -1054,7 +1058,7 @@ void IPlugCLAP::SetDefaultConfig()
     return false;
   };
   
-  auto testMatches = [&](int chans)
+  auto testMatchesPass = [&](int chans, bool allowNoInput)
   {
     bool matched = false;
     int configNBusesI = 0;
@@ -1062,13 +1066,23 @@ void IPlugCLAP::SetDefaultConfig()
     
     for (int i = 0; i < static_cast<int>(audioPortsConfigCount()); i++)
     {
-      if (isMatch(i, chans))
+      if (isMatch(i, chans, allowNoInput))
       {
         const int nBusesI = NBuses(ERoute::kInput, i);
         const int nBusesO = NBuses(ERoute::kOutput, i);
         
-        const bool preferInput = nBusesO < configNBusesI;
-        const bool preferOutput = nBusesI < configNBusesO;
+        // 🚨 THESE TWO WERE CROSS-WIRED: preferInput compared the candidate's
+        // OUTPUT bus count against the incumbent's INPUT count, and preferOutput
+        // did the reverse. The composite condition below settles what they were
+        // meant to be -- it gates preferInput on `nBusesO == configNBusesO`, so
+        // the primary key is the OUTPUT bus count and the secondary is the INPUT
+        // bus count. A comparison across the two directions cannot mean anything
+        // under that structure. Direction (fewest buses wins) is unchanged, so
+        // every plug-in that was already choosing correctly still does --
+        // including the sidechain shape "2-2 2.2-2", which keeps defaulting to
+        // its plain stereo config.
+        const bool preferInput = nBusesI < configNBusesI;
+        const bool preferOutput = nBusesO < configNBusesO;
         
         if (!matched || preferOutput || (nBusesO == configNBusesO && preferInput))
         {
@@ -1081,6 +1095,29 @@ void IPlugCLAP::SetDefaultConfig()
     }
     
     return matched;
+  };
+  
+  // 🚨 A FULL IO MATCH FIRST, THE INSTRUMENT'S NO-INPUT EXEMPTION ONLY AS A
+  // FALLBACK.
+  //
+  // The exemption used to be offered on equal terms with a real match, and the
+  // "fewest buses wins" preference then guaranteed the no-input config beat the
+  // one with an input bus every single time. So an instrument declaring
+  // "0-2 2-2" -- which is how an author says "I work with or without an input" --
+  // came up in every CLAP host with NO INPUT PORTS AT ALL, and the input half of
+  // what it declared was unreachable. Hosts that implement audio-ports-config
+  // could switch to it; hosts that do not never saw it existed.
+  //
+  // Trying the strict match first costs nothing and changes nothing for anyone
+  // else: an instrument declaring only "0-2" fails pass one and is picked up by
+  // pass two exactly as before, and for an effect the exemption never applied,
+  // so pass one is already the whole of the old behaviour.
+  auto testMatches = [&](int chans)
+  {
+    if (testMatchesPass(chans, false))
+      return true;
+    
+    return IsInstrument() ? testMatchesPass(chans, true) : false;
   };
   
   mConfigIdx = 0;
