@@ -164,9 +164,20 @@ function(_iplug_sign_bundle target source_path dest_path plugin_name)
   # Ad-hoc signing is deterministic -- two byte-identical bundles signed
   # separately produce byte-identical output (verified) -- so sealing both ends
   # leaves them hash-identical, which is exactly what the gate wants to see.
+  # --deep, because a bundle can CONTAIN code. The standalone app of a product
+  # that builds AUv3 embeds DiploidAU.framework in Contents/Frameworks and an
+  # .appex in Contents/PlugIns; signing the outer bundle while those are unsigned
+  # fails outright with "code object is not signed at all / In subcomponent:
+  # ...framework" and stops the build. Signing must go inside-out, which is what
+  # --deep does. It is a no-op on the plug-in bundles, which nest nothing.
+  #
+  # (Apple discourages --deep for DISTRIBUTION signing, where each nested piece
+  # wants its own identity and entitlements. This is ad-hoc sealing of a locally
+  # installed build, where the only requirement is that the seal exists and
+  # covers everything, so the objection does not apply.)
   add_custom_command(TARGET ${target} POST_BUILD
-    COMMAND codesign --force --sign - "${source_path}"
-    COMMAND codesign --force --sign - "${dest_path}"
+    COMMAND codesign --force --deep --sign - "${source_path}"
+    COMMAND codesign --force --deep --sign - "${dest_path}"
     COMMAND codesign --verify --strict "${dest_path}"
     COMMENT "[iPlug2] Signing ${plugin_name} (ad-hoc, seals Resources)"
     VERBATIM
