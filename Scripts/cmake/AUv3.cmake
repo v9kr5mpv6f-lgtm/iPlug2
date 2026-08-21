@@ -125,4 +125,31 @@ function(iplug_embed_auv3_in_app app_target project_name)
       COMMENT "Embedding AUv3 (framework + appex) in ${project_name}.app"
     )
   endif()
+
+  # AND INTO THE INSTALLED APP. The deploy copy is registered before this
+  # function runs, so it has already happened by the time the embed executes:
+  # the built app gets its framework and appex, and the installed one is left
+  # with empty Contents/Frameworks and Contents/PlugIns. An installed standalone
+  # in that state cannot register its AUv3 at all, and the two copies also
+  # disagree, which the fleet's installed-vs-built gate reports as STALE once
+  # the bundles are signed.
+  #
+  # Mirroring the embed into the deployed path fixes both: same content, so the
+  # signing step that runs last seals two identical bundles.
+  get_target_property(_iplug_deployed_app ${app_target} IPLUG2_DEPLOYED_BUNDLE)
+  if(_iplug_deployed_app AND NOT XCODE)
+    add_custom_command(TARGET ${app_target} POST_BUILD
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${_iplug_deployed_app}/Contents/Frameworks"
+      COMMAND cp -R
+        "${CMAKE_BINARY_DIR}/out/${project_name}AU.framework"
+        "${_iplug_deployed_app}/Contents/Frameworks/"
+      COMMAND ${CMAKE_COMMAND} -E make_directory
+        "${_iplug_deployed_app}/Contents/PlugIns"
+      COMMAND ${CMAKE_COMMAND} -E copy_directory
+        "${CMAKE_BINARY_DIR}/out/${project_name}AUv3.appex"
+        "${_iplug_deployed_app}/Contents/PlugIns/${project_name}AUv3.appex"
+      COMMENT "Embedding AUv3 (framework + appex) in the deployed ${project_name}.app"
+    )
+  endif()
 endfunction()

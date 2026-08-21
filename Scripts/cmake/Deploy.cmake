@@ -187,6 +187,15 @@ endfunction()
 function(_iplug_copy_plugin target source_path dest_dir plugin_name is_bundle)
   set(dest_path "${dest_dir}/${plugin_name}")
 
+  # Record where this target was deployed, so a LATER post-build step can reach
+  # the installed copy. Nothing else knows the path: the deploy is registered by
+  # iplug_configure_target and later steps run in other functions entirely. The
+  # AUv3 embed is the case that needs it -- it is registered after the deploy,
+  # so its copy runs after the deploy's, and without this property it can only
+  # ever modify the BUILT app while the installed one is left without its
+  # framework and appex.
+  set_target_properties(${target} PROPERTIES IPLUG2_DEPLOYED_BUNDLE "${dest_path}")
+
   if(is_bundle)
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E echo "[iPlug2] Copying plugin: ${dest_path}"
