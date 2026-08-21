@@ -147,6 +147,20 @@ endfunction()
 # @param plugin_name  Name of the plugin file/bundle
 # @param is_bundle    TRUE if plugin is a directory/bundle, FALSE if single file
 #------------------------------------------------------------------------
+#------------------------------------------------------------------------
+# _iplug_sign_bundle (internal, macOS only)
+# Ad-hoc sign a deployed bundle so its Resources are sealed, then verify with
+# the check the HOST makes rather than the one the signer makes about itself.
+#------------------------------------------------------------------------
+function(_iplug_sign_bundle target dest_path plugin_name)
+  add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND codesign --force --sign - "${dest_path}"
+    COMMAND codesign --verify --strict "${dest_path}"
+    COMMENT "[iPlug2] Signing ${plugin_name} (ad-hoc, seals Resources)"
+    VERBATIM
+  )
+endfunction()
+
 function(_iplug_copy_plugin target source_path dest_dir plugin_name is_bundle)
   set(dest_path "${dest_dir}/${plugin_name}")
 
@@ -158,6 +172,61 @@ function(_iplug_copy_plugin target source_path dest_dir plugin_name is_bundle)
       COMMAND ${CMAKE_COMMAND} -E copy_directory "${source_path}" "${dest_path}"
       COMMENT "[iPlug2] Deploying ${plugin_name} (copy)"
     )
+
+    # SEAL THE DEPLOYED BUNDLE'S RESOURCES (macOS only).
+    #
+    # The linker's ad-hoc signature carries no CodeResources, so any bundle with
+    # a Contents/Resources folder fails SecStaticCodeCheckValidity with -67056,
+    # "code has no resources but signature indicates they must be present".
+    # Ableton Live's VST3 scanner calls exactly that API and logs the result as
+    # "not a plugin" -- the plug-in is simply invisible, with no error the user
+    # can see. AU and CLAP host paths do not validate, which is why this
+    # presents as "works everywhere except Live".
+    #
+    # This has to happen on the DEPLOYED copy rather than the built one: a
+    # bundle signature seals Info.plist, and the Ninja plist fixup that several
+    # house products run writes into the deployed bundle after this copy. Signing
+    # the source and letting the copy carry the signature would be undone by
+    # that write. Signing here, last, is what survives it -- and re-signing is
+    # idempotent, so a product that adds its own later step can sign again
+    # harmlessly.
+    #
+    # `--force` replaces the linker's signature rather than failing on it.
+    # Verification uses the CONSUMER's check, not the signer's own exit code:
+    # the entire defect is a signature codesign was happy to produce and only
+    # the Security API rejected.
+    # IT MUST BE THE LAST POST_BUILD STEP, and that is not automatic. The seal
+    # covers Info.plist (tamper with it and the check returns -67030), while
+    # several house products append a Ninja plist fixup that writes into the
+    # DEPLOYED bundle after this function has run. Signing at this point in the
+    # file appears to work only because that fixup currently copies byte-identical
+    # content, leaving the hashes unchanged -- the moment the two differ, the
+    # deployed bundle is signed-then-modified and vanishes from Live again, which
+    # is the very failure this exists to prevent.
+    #
+    # cmake_language(DEFER) queues the command until the end of the calling
+    # directory's processing, which is after the product's own POST_BUILD steps
+    # have been added; POST_BUILD commands run in the order they were added, so
+    # deferring puts the signature last. DEFER needs CMake 3.19 and this project
+    # declares 3.14, hence the guarded fallback.
+    if(APPLE)
+      if(NOT CMAKE_VERSION VERSION_LESS 3.19)
+        # DEFER CALL re-evaluates its arguments in the DEFERRED scope, where
+        # these locals no longer exist -- passing "${target}" straight through
+        # silently arrives empty and add_custom_command then fails with
+        # "TARGET requires a value". EVAL CODE expands them now and bakes the
+        # results in as bracket-quoted literals, which is the documented way to
+        # defer a call with values rather than names.
+        cmake_language(EVAL CODE
+          "cmake_language(DEFER CALL _iplug_sign_bundle [[${target}]] [[${dest_path}]] [[${plugin_name}]])")
+      else()
+        # Pre-3.19: sign here and accept the ordering caveat above rather than
+        # shipping unsigned bundles. Say so, because a silent weaker guarantee
+        # is how this class of defect survives.
+        message(STATUS "[iPlug2] CMake < 3.19: signing ${plugin_name} before any product post-build steps; a product that rewrites the deployed bundle afterwards must re-sign it.")
+        _iplug_sign_bundle("${target}" "${dest_path}" "${plugin_name}")
+      endif()
+    endif()
   else()
     add_custom_command(TARGET ${target} POST_BUILD
       COMMAND ${CMAKE_COMMAND} -E echo "[iPlug2] Copying plugin: ${dest_path}"
