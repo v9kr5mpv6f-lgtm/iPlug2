@@ -152,8 +152,20 @@ endfunction()
 # Ad-hoc sign a deployed bundle so its Resources are sealed, then verify with
 # the check the HOST makes rather than the one the signer makes about itself.
 #------------------------------------------------------------------------
-function(_iplug_sign_bundle target dest_path plugin_name)
+function(_iplug_sign_bundle target source_path dest_path plugin_name)
+  # BOTH COPIES, and that is not belt-and-braces -- it is what keeps the fleet's
+  # staleness gate honest. installed-vs-built.sh compares the SHA-256 of the
+  # Mach-O inside each bundle, and a signature lives inside the Mach-O, so
+  # signing only the deployed copy makes every bundle read STALE: "installed
+  # <hash-a> built <hash-b>". That gate exists because a stale bundle loads,
+  # runs, and is not the plug-in whose tests passed; breaking it to fix a
+  # signature would trade a visible defect for an invisible one.
+  #
+  # Ad-hoc signing is deterministic -- two byte-identical bundles signed
+  # separately produce byte-identical output (verified) -- so sealing both ends
+  # leaves them hash-identical, which is exactly what the gate wants to see.
   add_custom_command(TARGET ${target} POST_BUILD
+    COMMAND codesign --force --sign - "${source_path}"
     COMMAND codesign --force --sign - "${dest_path}"
     COMMAND codesign --verify --strict "${dest_path}"
     COMMENT "[iPlug2] Signing ${plugin_name} (ad-hoc, seals Resources)"
@@ -218,13 +230,13 @@ function(_iplug_copy_plugin target source_path dest_dir plugin_name is_bundle)
         # results in as bracket-quoted literals, which is the documented way to
         # defer a call with values rather than names.
         cmake_language(EVAL CODE
-          "cmake_language(DEFER CALL _iplug_sign_bundle [[${target}]] [[${dest_path}]] [[${plugin_name}]])")
+          "cmake_language(DEFER CALL _iplug_sign_bundle [[${target}]] [[${source_path}]] [[${dest_path}]] [[${plugin_name}]])")
       else()
         # Pre-3.19: sign here and accept the ordering caveat above rather than
         # shipping unsigned bundles. Say so, because a silent weaker guarantee
         # is how this class of defect survives.
         message(STATUS "[iPlug2] CMake < 3.19: signing ${plugin_name} before any product post-build steps; a product that rewrites the deployed bundle afterwards must re-sign it.")
-        _iplug_sign_bundle("${target}" "${dest_path}" "${plugin_name}")
+        _iplug_sign_bundle("${target}" "${source_path}" "${dest_path}" "${plugin_name}")
       endif()
     endif()
   else()
