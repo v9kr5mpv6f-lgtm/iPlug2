@@ -568,9 +568,23 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   
   CVDisplayLinkStart(mDisplayLink);
 #else
-  double sec = 1.0 / (double) mGraphics->FPS();
-  mTimer = [NSTimer timerWithTimeInterval:sec target:self selector:@selector(onTimer:) userInfo:nil repeats:YES];
-  [[NSRunLoop currentRunLoop] addTimer: mTimer forMode: (NSString*) kCFRunLoopCommonModes];
+  // The caller thread here is whatever thread the host attaches the editor from --
+  // reliably the main thread in-process/standalone, but not guaranteed out-of-process
+  // (see IPlugAUViewController.mm's isMainThread check for the same caveat on a
+  // different code path). Hop to the main queue so the NSRunLoop/NSTimer calls
+  // themselves run on the thread that owns the target run loop; mWantsTimer guards
+  // against the window having been closed again before this runs.
+  mWantsTimer = YES;
+  [self retain];
+  dispatch_async(dispatch_get_main_queue(), ^{
+    if (mWantsTimer)
+    {
+      double sec = 1.0 / (double) mGraphics->FPS();
+      mTimer = [NSTimer timerWithTimeInterval:sec target:self selector:@selector(onTimer:) userInfo:nil repeats:YES];
+      [[NSRunLoop mainRunLoop] addTimer: mTimer forMode: (NSString*) kCFRunLoopCommonModes];
+    }
+    [self release];
+  });
 #endif
 }
 
@@ -582,6 +596,7 @@ static CVReturn displayLinkCallback(CVDisplayLinkRef displayLink, const CVTimeSt
   CVDisplayLinkRelease(mDisplayLink);
   mDisplayLink = nil;
 #else
+  mWantsTimer = NO;
   [mTimer invalidate];
   mTimer = nullptr;
 #endif
