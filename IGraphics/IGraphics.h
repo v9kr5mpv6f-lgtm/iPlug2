@@ -1085,8 +1085,19 @@ public:
    * IEditorDelegate::OnParentWindowResize() to avoid feedback loops */
   void Resize(int w, int h, float scale, bool needsPlatformResize = true);
   
-  /** Enables strict drawing mode. When enabled, only dirty controls are redrawn.
-   * When disabled, all controls are redrawn on each frame.
+  /** Enables strict drawing mode, which changes how a frame's dirty rects
+   * become draw passes -- NOT which controls are redrawn. Either way only dirty
+   * area is repainted, and every control intersecting a pass draws inside it.
+   *
+   * When enabled, the dirty list is collapsed to its bounding rect and drawn in
+   * ONE pass: more pixels, but a single walk of the control list, and
+   * IRECTList::Optimize() never runs. When disabled -- the default -- the list
+   * is optimised and each rect it yields is drawn in its own pass: less area,
+   * one walk per rect.
+   *
+   * Marks every control dirty, so the frame after the call is a full repaint
+   * whichever mode was set.
+   *
    * @param strict Set /c true to enable strict drawing mode */
   void SetStrictDrawing(bool strict);
 
