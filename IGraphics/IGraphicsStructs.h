@@ -1945,23 +1945,60 @@ public:
   }
   
 private:
-  /** Shrinks a rectangle by removing the intersection area
-   * @param r The original rectangle
+  /** Shrinks a rectangle by removing the intersection area.
+   *
+   * The caller only reaches here when r.Mergeable(i) holds, so i spans r fully
+   * on one axis and what is left of r is a strip on EACH side of i along the
+   * other -- up to two. The first is returned; the second, which exists only
+   * when i lies strictly inside r, is added to the list the way Split() adds
+   * its second piece.
+   *
+   * Returning just one of the two was a silent loss of dirty area: a control
+   * rect crossed through its middle by another (a wide label crossed by a knob
+   * slot, say) kept the side before the crossing and dropped the side after it,
+   * no other rect covered that strip, and IGraphics::Draw() therefore never
+   * repainted it. On a backend whose framebuffer persists between frames the
+   * strip keeps the PREVIOUS frame's pixels -- which is what a tab switch that
+   * hides and shows many stacked controls at once looks like: pieces of the old
+   * tab left drawn on the new one.
+   *
+   * @param r The original rectangle, BY VALUE -- Add() below can realloc
+   * mRects, and the caller passes Get(idx), which is a reference INTO that
+   * buffer. Split() takes its own rect by value for the same reason.
    * @param i The intersection rectangle to remove
-   * @return The remaining portion of the original rectangle */
-  IRECT Shrink(const IRECT &r, const IRECT &i)
+   * @return The remaining portion of the original rectangle, the rest of it
+   * having been added to the list */
+  IRECT Shrink(const IRECT r, const IRECT &i)
   {
     if (i.L != r.L)
+    {
+      if (i.R != r.R)
+        Add(IRECT(i.R, r.T, r.R, r.B));
       return IRECT(r.L, r.T, i.L, r.B);
+    }
     if (i.T != r.T)
+    {
+      if (i.B != r.B)
+        Add(IRECT(r.L, i.B, r.R, r.B));
       return IRECT(r.L, r.T, r.R, i.T);
+    }
     if (i.R != r.R)
       return IRECT(i.R, r.T, r.R, r.B);
     return IRECT(r.L, i.B, r.R, r.B);
   }
   
-  /** Splits a rectangle around an intersection, adding one part to the list
-   * @param r The rectangle to split
+  /** Splits a rectangle around an intersection, adding one part to the list.
+   *
+   * The two parts cover r minus i only when i meets r at a CORNER, i.e. when it
+   * shares two adjacent edges with it. Optimize() reaches here solely in that
+   * case and relies on it: an intersection that meets r along one edge only
+   * leaves the other rect Mergeable with it, so Shrink() takes it first, and an
+   * intersection that meets no edge of r means the other rect is inside r,
+   * which the Contains pass has already deleted. Calling this from anywhere
+   * else, or weakening either of those passes, silently drops dirty area.
+   *
+   * @param r The rectangle to split. BY VALUE, as in Shrink(): Add() can
+   * realloc mRects, and the caller passes Get(idx), a reference into it.
    * @param i The intersection rectangle
    * @return The remaining portion after adding the split part to the list */
   IRECT Split(const IRECT r, const IRECT &i)
