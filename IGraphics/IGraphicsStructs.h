@@ -1962,11 +1962,13 @@ private:
    * hides and shows many stacked controls at once looks like: pieces of the old
    * tab left drawn on the new one.
    *
-   * @param r The original rectangle
+   * @param r The original rectangle, BY VALUE -- Add() below can realloc
+   * mRects, and the caller passes Get(idx), which is a reference INTO that
+   * buffer. Split() takes its own rect by value for the same reason.
    * @param i The intersection rectangle to remove
    * @return The remaining portion of the original rectangle, the rest of it
    * having been added to the list */
-  IRECT Shrink(const IRECT &r, const IRECT &i)
+  IRECT Shrink(const IRECT r, const IRECT &i)
   {
     if (i.L != r.L)
     {
