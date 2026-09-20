@@ -1987,8 +1987,18 @@ private:
     return IRECT(r.L, i.B, r.R, r.B);
   }
   
-  /** Splits a rectangle around an intersection, adding one part to the list
-   * @param r The rectangle to split
+  /** Splits a rectangle around an intersection, adding one part to the list.
+   *
+   * The two parts cover r minus i only when i meets r at a CORNER, i.e. when it
+   * shares two adjacent edges with it. Optimize() reaches here solely in that
+   * case and relies on it: an intersection that meets r along one edge only
+   * leaves the other rect Mergeable with it, so Shrink() takes it first, and an
+   * intersection that meets no edge of r means the other rect is inside r,
+   * which the Contains pass has already deleted. Calling this from anywhere
+   * else, or weakening either of those passes, silently drops dirty area.
+   *
+   * @param r The rectangle to split. BY VALUE, as in Shrink(): Add() can
+   * realloc mRects, and the caller passes Get(idx), a reference into it.
    * @param i The intersection rectangle
    * @return The remaining portion after adding the split part to the list */
   IRECT Split(const IRECT r, const IRECT &i)
