@@ -119,6 +119,30 @@ function(_iplug_add_win_rc target)
 endfunction()
 
 # ============================================================================
+# Give a Windows target its own linker PDB and import library
+#
+# Every format of a plug-in shares OUTPUT_NAME ("${project_name}"), so MSVC's
+# default output names collide: each target's import library is <name>.lib in
+# the one archive directory, and APP and CLAP, which both build into out/, also
+# share out/<name>.pdb. Ninja runs links in parallel, so two of them can open
+# the same file at once and the later one fails with LNK1104 (reported when
+# VST3 and CLAP were relinked in one run; earlier builds only passed because
+# they happened to serialise). Naming both after the target -- <name>-vst3,
+# <name>-clap and so on -- makes every link's outputs unique. OUTPUT_NAME, and
+# so the shipped .exe/.vst3/.clap file names, is not touched. No-op off Windows.
+# ============================================================================
+function(_iplug_win_unique_link_outputs target)
+  if(NOT WIN32)
+    return()
+  endif()
+
+  set_target_properties(${target} PROPERTIES
+    PDB_NAME "${target}"
+    ARCHIVE_OUTPUT_NAME "${target}"
+  )
+endfunction()
+
+# ============================================================================
 # Create APP, VST3, CLAP, AAX targets (macOS/Windows only)
 # ============================================================================
 function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resources web_resources base_lib)
@@ -131,6 +155,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   if("APP" IN_LIST formats)
     add_executable(${plugin_name}-app ${sources})
     _iplug_add_win_rc(${plugin_name}-app)
+    _iplug_win_unique_link_outputs(${plugin_name}-app)
     iplug_add_target(${plugin_name}-app PUBLIC
       LINK iPlug2::APP ${ui_lib} ${base_lib}
     )
@@ -143,6 +168,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   if("VST2" IN_LIST formats AND IPLUG2_VST2_SUPPORTED)
     add_library(${plugin_name}-vst2 MODULE ${sources})
     _iplug_add_win_rc(${plugin_name}-vst2)
+    _iplug_win_unique_link_outputs(${plugin_name}-vst2)
     iplug_add_target(${plugin_name}-vst2 PUBLIC
       LINK iPlug2::VST2 ${ui_lib} ${base_lib}
     )
@@ -155,6 +181,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   if("VST3" IN_LIST formats)
     add_library(${plugin_name}-vst3 MODULE ${sources})
     _iplug_add_win_rc(${plugin_name}-vst3)
+    _iplug_win_unique_link_outputs(${plugin_name}-vst3)
     iplug_add_target(${plugin_name}-vst3 PUBLIC
       LINK iPlug2::VST3 ${ui_lib} ${base_lib}
     )
@@ -167,6 +194,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   if("CLAP" IN_LIST formats AND IPLUG2_CLAP_SUPPORTED)
     add_library(${plugin_name}-clap MODULE ${sources})
     _iplug_add_win_rc(${plugin_name}-clap)
+    _iplug_win_unique_link_outputs(${plugin_name}-clap)
     iplug_add_target(${plugin_name}-clap PUBLIC
       LINK iPlug2::CLAP ${ui_lib} ${base_lib}
     )
@@ -179,6 +207,7 @@ function(_iplug_create_desktop_targets plugin_name formats sources ui_lib resour
   if("AAX" IN_LIST formats AND IPLUG2_AAX_SUPPORTED)
     add_library(${plugin_name}-aax MODULE ${sources})
     _iplug_add_win_rc(${plugin_name}-aax)
+    _iplug_win_unique_link_outputs(${plugin_name}-aax)
     iplug_add_target(${plugin_name}-aax PUBLIC
       LINK iPlug2::AAX ${ui_lib} ${base_lib}
     )
