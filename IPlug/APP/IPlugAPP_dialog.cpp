@@ -195,6 +195,12 @@ void IPlugAPPHost::PopulateAudioDialogs(HWND hwndDlg)
 //  }
 
 //  Populate buffer size combobox
+  // Emptied first, like every other combo this dialog fills: this runs once when
+  // the dialog opens and again on every driver-type change, and the sizes were
+  // being appended each time (11 entries became 22), so a pick from the second
+  // copy indexed past the end of kBufferSizeOptions in the handler below.
+  SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_RESETCONTENT,0,0);
+
   for (int i = 0; i< kNumBufferSizeOptions; i++)
   {
     SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)kBufferSizeOptions[i].c_str());
@@ -453,7 +459,11 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           if (HIWORD(wParam) == CBN_SELCHANGE)
           {
             int iovsidx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_BUF_SIZE, CB_GETCURSEL, 0, 0);
-            mState.mBufferSize = atoi(kBufferSizeOptions[iovsidx].c_str());
+
+            // CB_GETCURSEL is CB_ERR (-1) with nothing selected, and the table has
+            // kNumBufferSizeOptions entries: never index it with anything else.
+            if (iovsidx >= 0 && iovsidx < kNumBufferSizeOptions)
+              mState.mBufferSize = atoi(kBufferSizeOptions[iovsidx].c_str());
           }
           break;
         case IDC_COMBO_AUDIO_SR:
