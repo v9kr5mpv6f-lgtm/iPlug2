@@ -141,6 +141,28 @@ bool IPlugAPPHost::InitState()
     mINIPath.Append("settings.ini");
     UpdateINI(); // will write file if doesn't exist
 #elif defined OS_MAC
+    // mkdir() makes only the last component. With no ~/Library/Application
+    // Support (a fresh or scratch account) it failed, InitState() returned
+    // false, Init() bailed before creating mDAC, and the launch then crashed in
+    // TryToChangeAudio(). Make the missing parents first, private as the system
+    // makes them; the settings folder itself is created exactly as before.
+    {
+      std::string parents(mINIPath.Get()); // ".../Application Support/<name>/"
+      while (parents.size() > 1 && parents.back() == '/')
+        parents.pop_back();
+      const size_t lastSlash = parents.find_last_of('/');
+      parents.resize(lastSlash == std::string::npos ? 0 : lastSlash); // ".../Application Support"
+
+      // Each prefix in turn; EEXIST is the normal case, and a real failure
+      // shows up as the mkdir of the settings folder below failing too.
+      for (size_t slash = parents.find('/', 1);; slash = parents.find('/', slash + 1))
+      {
+        mkdir(parents.substr(0, slash).c_str(), S_IRWXU); // npos: the whole string
+        if (slash == std::string::npos)
+          break;
+      }
+    }
+
     mode_t process_mask = umask(0);
     int result_code = mkdir(mINIPath.Get(), S_IRWXU | S_IRWXG | S_IRWXO);
     umask(process_mask);
@@ -427,6 +449,12 @@ bool IPlugAPPHost::TryToChangeAudio()
   // Skip audio initialization in no-I/O mode or screenshot mode
   if (mNoIO || IsScreenshotMode())
     return true;
+
+  // No audio object: Init() bailed before TryToChangeAudioDriverType() (the
+  // callers in IPlugAPP_main.cpp ignore its result and call this regardless), or
+  // the driver type has no backend. Every path below dereferences mDAC.
+  if (!mDAC)
+    return false;
 
 #if defined OS_WIN
   // ASIO has one device, use the output for the input ID
