@@ -201,11 +201,23 @@ void IPlugAPPHost::PopulateAudioDialogs(HWND hwndDlg)
   // copy indexed past the end of kBufferSizeOptions in the handler below.
   SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_RESETCONTENT,0,0);
 
+  // Only the sizes AudioCallback can process (IsAllowedBufferSize: multiples of
+  // APP_SIGNAL_VECTOR_SIZE, see the memory-safety note there). The list no longer
+  // lines up with kBufferSizeOptions, so each item carries its size as item data,
+  // the way the sample-rate list does, and the handler below reads that back.
   for (int i = 0; i< kNumBufferSizeOptions; i++)
   {
-    SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)kBufferSizeOptions[i].c_str());
+    const int size = atoi(kBufferSizeOptions[i].c_str());
+
+    if (!IsAllowedBufferSize(size))
+      continue;
+
+    LRESULT item = SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_ADDSTRING,0,(LPARAM)kBufferSizeOptions[i].c_str());
+
+    if (item >= 0)
+      SendDlgItemMessage(hwndDlg,IDC_COMBO_AUDIO_BUF_SIZE,CB_SETITEMDATA,item,(LPARAM)size);
   }
-  
+
   WDL_String str;
   str.SetFormatted(32, "%i", mState.mBufferSize);
 
@@ -460,10 +472,17 @@ WDL_DLGRET IPlugAPPHost::PreferencesDlgProc(HWND hwndDlg, UINT uMsg, WPARAM wPar
           {
             int iovsidx = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_BUF_SIZE, CB_GETCURSEL, 0, 0);
 
-            // CB_GETCURSEL is CB_ERR (-1) with nothing selected, and the table has
-            // kNumBufferSizeOptions entries: never index it with anything else.
-            if (iovsidx >= 0 && iovsidx < kNumBufferSizeOptions)
-              mState.mBufferSize = atoi(kBufferSizeOptions[iovsidx].c_str());
+            // CB_GETCURSEL is CB_ERR (-1) with nothing selected, and the list is no
+            // longer the whole of kBufferSizeOptions, so the table is not indexed at
+            // all: the size comes from the chosen item, and only a size that
+            // AudioCallback can process is accepted.
+            if (iovsidx >= 0)
+            {
+              const int size = (int) SendDlgItemMessage(hwndDlg, IDC_COMBO_AUDIO_BUF_SIZE, CB_GETITEMDATA, iovsidx, 0);
+
+              if (IsAllowedBufferSize(size))
+                mState.mBufferSize = (uint32_t) size;
+            }
           }
           break;
         case IDC_COMBO_AUDIO_SR:

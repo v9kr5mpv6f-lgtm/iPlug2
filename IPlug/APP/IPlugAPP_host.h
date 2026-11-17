@@ -72,6 +72,30 @@ BEGIN_IPLUG_NAMESPACE
 
 const int kNumBufferSizeOptions = 11;
 const std::string kBufferSizeOptions[kNumBufferSizeOptions] = {"32", "64", "96", "128", "192", "256", "512", "1024", "2048", "4096", "8192" };
+
+// The size a saved value that is not allowed falls back to, and the default for a new state.
+const int kDefaultBufferSize = 512;
+static_assert(kDefaultBufferSize % APP_SIGNAL_VECTOR_SIZE == 0,
+              "kDefaultBufferSize is what a disallowed saved buffer size falls back to, and AudioCallback only processes buffers that are a multiple of APP_SIGNAL_VECTOR_SIZE: pick a default that is");
+
+/** A buffer size the standalone offers and can run: an entry of kBufferSizeOptions that is a multiple of
+ * APP_SIGNAL_VECTOR_SIZE, because AudioCallback processes in blocks of that many frames and would otherwise
+ * read and write past the end of the device buffer. The Buffer Size menu and the check on a saved value both
+ * ask this, so the two cannot disagree. */
+inline bool IsAllowedBufferSize(int size)
+{
+  if (size <= 0 || size % APP_SIGNAL_VECTOR_SIZE != 0)
+    return false;
+
+  for (int i = 0; i < kNumBufferSizeOptions; i++)
+  {
+    if (atoi(kBufferSizeOptions[i].c_str()) == size)
+      return true;
+  }
+
+  return false;
+}
+
 const int kDeviceDS = 0; const int kDeviceCoreAudio = 0; const int kDeviceAlsa = 0;
 const int kDeviceASIO = 1; const int kDeviceJack = 1;
 extern UINT gSCROLLMSG;
@@ -107,7 +131,7 @@ public:
     , mMidiInDev(OFF_TEXT)
     , mMidiOutDev(OFF_TEXT)
     , mAudioDriverType(0) // DirectSound / CoreAudio by default
-    , mBufferSize(512)
+    , mBufferSize(kDefaultBufferSize)
     , mAudioSR(44100)
     , mMidiInChan(0)
     , mMidiOutChan(0)

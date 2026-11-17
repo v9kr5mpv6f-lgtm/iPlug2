@@ -119,7 +119,15 @@ bool IPlugAPPHost::InitState()
       mState.mAudioOutChanR = GetPrivateProfileInt("audio", "out2", 2, mINIPath.Get());
       //mState.mAudioInIsMono = GetPrivateProfileInt("audio", "monoinput", 0, mINIPath.Get());
 
-      mState.mBufferSize = GetPrivateProfileInt("audio", "buffer", 512, mINIPath.Get());
+      mState.mBufferSize = GetPrivateProfileInt("audio", "buffer", kDefaultBufferSize, mINIPath.Get());
+
+      // A saved size the standalone does not offer and cannot run (0, 32 and 96 among
+      // them: see AudioCallback) falls back to the default. The UpdateINI() below
+      // writes the state back on every launch, so the file heals itself; a saved
+      // size that is allowed is left exactly as it is.
+      if (!IsAllowedBufferSize((int) mState.mBufferSize))
+        mState.mBufferSize = kDefaultBufferSize;
+
       mState.mAudioSR = GetPrivateProfileInt("audio", "sr", 44100, mINIPath.Get());
 
       //midi
@@ -635,6 +643,17 @@ bool IPlugAPPHost::InitAudio(uint32_t inID, uint32_t outID, uint32_t sr, uint32_
     return false;
   }
 
+  // mBufferSize now holds the size the driver GRANTED, which need not be the one
+  // asked for (0, for one, becomes the device minimum). AudioCallback processes in
+  // blocks of APP_SIGNAL_VECTOR_SIZE, so do not run a stream whose buffer is not a
+  // multiple of that: close it and fail like any other failed open.
+  if (mBufferSize % (uint32_t) APP_SIGNAL_VECTOR_SIZE != 0)
+  {
+    DBGMSG("driver granted buffer size %i, not a multiple of %i: stream not started\n", mBufferSize, APP_SIGNAL_VECTOR_SIZE);
+    mDAC->closeStream();
+    return false;
+  }
+
   for (int i = 0; i < iParams.nChannels; i++)
   {
     mInputBufPtrs.Add(nullptr); //will be set in callback
@@ -722,8 +741,15 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
 
   bool startWait = _this->mVecWait >= APP_N_VECTOR_WAIT; // wait APP_N_VECTOR_WAIT * iovs before processing audio, to avoid clicks
   bool doFade = _this->mVecWait == APP_N_VECTOR_WAIT || _this->mAudioEnding;
-  
-  if (startWait && !_this->mAudioDone)
+
+  // MEMORY SAFETY. The loop below hands AppProcess APP_SIGNAL_VECTOR_SIZE frames
+  // starting at offset i of the device buffer, whatever nFrames is, so a device
+  // buffer that is not a multiple of the vector size is read and written past its
+  // end (reached with saved sizes such as 32 or 96, and with a driver that grants
+  // an odd size). Such a buffer gets silence and is never processed.
+  const bool sizeUnsafe = (nFrames % (uint32_t) APP_SIGNAL_VECTOR_SIZE) != 0;
+
+  if (!sizeUnsafe && startWait && !_this->mAudioDone)
   {
     if (doFade)
       ApplyFades(pInputBufferD, nins, nFrames, _this->mAudioEnding);
@@ -766,8 +792,13 @@ int IPlugAPPHost::AudioCallback(void* pOutputBuffer, void* pInputBuffer, uint32_
   else
   {
     memset(pOutputBufferD, 0, nFrames * nouts * sizeof(double));
+
+    // CloseAudio() waits on mAudioDone, which only the processing branch above
+    // sets; with that branch skipped for an unsafe size, nothing else ever would.
+    if (sizeUnsafe && _this->mAudioEnding)
+      _this->mAudioDone = true;
   }
-  
+
   _this->mVecWait = std::min(_this->mVecWait + 1, uint32_t(APP_N_VECTOR_WAIT + 1));
 
   return 0;
